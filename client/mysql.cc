@@ -317,6 +317,7 @@ static int com_quit(String *str, char *), com_go(String *str, char *),
     com_warnings(String *str, char *), com_nowarnings(String *str, char *),
     com_resetconnection(String *str, char *),
     com_query_attributes(String *str, char *),
+    com_extra(String *str, char *), //by silver
     com_ssl_session_data_print(String *str, char *);
 static int com_shell(String *str, char *);
 
@@ -369,6 +370,7 @@ typedef struct {
 
 static COMMANDS commands[] = {
     {"?", '?', com_help, true, "Synonym for `help'."},
+    {"\\", '\\', com_extra, true, "Extra short-cut command,"}, //by silver
     {"clear", 'c', com_clear, false, "Clear the current input statement."},
     {"connect", 'r', com_connect, true,
      "Reconnect to the server. Optional arguments are db and host."},
@@ -2421,6 +2423,7 @@ static COMMANDS *find_command(char *name) {
       All commands are in the first part of commands array and have a function
       to implement it.
     */
+
     for (uint i = 0; commands[i].func; i++) {
       if (!my_strnncoll(&my_charset_latin1, (uchar *)name, len,
                         pointer_cast<const uchar *>(commands[i].name), len) &&
@@ -3335,16 +3338,19 @@ static int com_go(String *buffer, char *line [[maybe_unused]]) {
 
     if (quick) {
       if (!(result = mysql_use_result(&mysql)) && mysql_field_count(&mysql)) {
-        error = put_error(&mysql);
+	error = put_error(&mysql);
         goto end;
       }
     } else {
       error = mysql_store_result_for_lazy(&result);
-      if (error) goto end;
+      if (error) {
+        goto end;
+      }
     }
 
-    if (verbose >= 3 || !opt_silent)
+    if (verbose >= 3 || !opt_silent) {
       mysql_end_timer(timer, time_buff);
+    }
     else
       time_buff[0] = '\0';
 
@@ -3364,17 +3370,26 @@ static int com_go(String *buffer, char *line [[maybe_unused]]) {
         }
       } else {
         init_pager();
-        if (opt_html)
+        if (opt_html) {
+          printf("This is opt_html");
           print_table_data_html(result);
-        else if (opt_xml)
+	}
+        else if (opt_xml) {
+          printf("This is opt_xml");
           print_table_data_xml(result);
+	}
         else if (vertical || (auto_vertical_output &&
-                              (terminal_width < get_result_width(result))))
-          print_table_data_vertically(result);
-        else if (opt_silent && verbose <= 2 && !output_tables)
-          print_tab_data(result);
-        else
-          print_table_data(result);
+                              (terminal_width < get_result_width(result)))) {
+          printf("This is vertical");
+	  print_table_data_vertically(result);
+	}
+        else if (opt_silent && verbose <= 2 && !output_tables) {
+          printf("This is opt_silent");
+	  print_tab_data(result);
+	}
+        else {
+	  print_table_data(result);
+	}
         if (!batchmode)
           sprintf(buff, "%" PRId64 " %s in set", mysql_num_rows(result),
                   mysql_num_rows(result) == 1LL ? "row" : "rows");
@@ -3407,6 +3422,7 @@ static int com_go(String *buffer, char *line [[maybe_unused]]) {
       fflush(stdout);
     mysql_free_result(result);
   } while (!(err = mysql_next_result(&mysql)));
+  //} while ((1 == 1));
   if (err >= 1) error = put_error(&mysql);
 
 end:
@@ -4018,7 +4034,7 @@ static int com_pager(String *buffer [[maybe_unused]],
   if (!param || !strlen(param))  // if pager was not given, use the default
   {
     if (!default_pager_set) {
-      tee_fprintf(stdout, "Default pager wasn't set, using stdout.\n");
+      tee_fprintf(stdout, "파라미터를 빼먹었잖아!!!\n");
       opt_nopager = true;
       my_stpcpy(pager, "stdout");
       PAGER = stdout;
@@ -5427,4 +5443,129 @@ static int com_resetconnection(String *buffer [[maybe_unused]],
     return put_error(&mysql);
   }
   return error;
+}
+
+//by silver
+#ifndef MAX_SUBCOMMAND_LEN
+#define MAX_SUBCOMMAND_LEN 3
+#endif
+static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
+  
+  char user_command[MAX_SUBCOMMAND_LEN]="";
+  char object_name[FN_REFLEN] = "";
+  char *end; 
+  char *param;
+  
+  // 명령어 정의
+  user_command[0] = line[2];
+  user_command[1] = line[3];
+  user_command[2] = line[4];
+  
+  while (my_isspace(charset_info, *line)) line++; 
+  if (!(param = strchr(line, ' '))){
+  }else{ 
+    while (my_isspace(charset_info, *param)) param++;
+    end = strmake(object_name, param, sizeof(object_name) - 1);
+    if (end > object_name){
+    }
+    while (end > object_name && (my_isspace(charset_info, end[-1]) ||
+                                 my_iscntrl(charset_info, end[-1])))
+    end--;
+    end[0] = 0;
+  }
+  
+  // Save old vertical mode(true일 경우 세로 출력 가능)
+  bool oldvertical = vertical;
+
+  // Run command
+  if(user_command[0]=='t' && user_command[1]=='c'){
+      vertical = true;
+      glob_buffer.append( STRING_WITH_LEN("  SHOW CREATE TABLE ") );
+      glob_buffer.append( object_name, strlen(object_name) );
+      glob_buffer.append( STRING_WITH_LEN(";") );
+  }
+  else if(user_command[0]=='t' && user_command[1]=='s'){
+      vertical = true;
+      glob_buffer.append( STRING_WITH_LEN("  SHOW TABLE STATUS LIKE '") );
+      glob_buffer.append( object_name, strlen(object_name) );
+      glob_buffer.append( STRING_WITH_LEN("';") );
+  }
+  else if(user_command[0]=='t' && user_command[1]=='t'){
+      glob_buffer.append( STRING_WITH_LEN("  SHOW TABLES LIKE '%") );
+      glob_buffer.append( object_name, strlen(object_name) );
+      glob_buffer.append( STRING_WITH_LEN("%';") );
+  }
+  else if(user_command[0]=='d' && user_command[1]=='c'){
+      glob_buffer.append( STRING_WITH_LEN("  SHOW CREATE DATABASE ") );
+      glob_buffer.append( object_name, strlen(object_name) );
+      glob_buffer.append( STRING_WITH_LEN(";") );
+  }
+  else if(user_command[0]=='d' && user_command[1]=='d' && user_command[2]==0){
+      glob_buffer.append( STRING_WITH_LEN("  SELECT row_number()over(order by schema_name) AS number, schema_name FROM INFORMATION_SCHEMA.SCHEMATA WHERE schema_name NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys');") );
+  }
+  else if(user_command[0]=='d' && user_command[1]=='d' && user_command[2]!=0){
+      int num_fields;
+      MYSQL_RES *result=nullptr;
+      //MYSQL_FIELD *field;
+      MYSQL_ROW row;
+      char cmd1[]="SELECT A.schema_name FROM (SELECT row_number()over(order by schema_name) AS number, schema_name FROM INFORMATION_SCHEMA.SCHEMATA WHERE schema_name NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')) AS A WHERE A.number = ";
+      char cmd2[2]={user_command[2], ';'}; //{데이터베이스, 세미콜론}
+      char chosen_database[100]="";
+
+      strcat(cmd1, cmd2);
+
+      mysql_query(&mysql, cmd1);
+      result = mysql_use_result(&mysql);
+      num_fields = mysql_field_count(&mysql);
+
+      while((row = mysql_fetch_row(result)) != NULL)
+      {
+          for(int i = 0; i < num_fields; i++)
+          {
+              //field = mysql_fetch_field_direct(result, i);
+              //printf("%s: %s, ", field->name, row[i]);
+              strcat(chosen_database, row[i]);
+              if (strlen(chosen_database) != 0){
+                  break;
+              }
+          }
+          printf("\n");
+      }
+      mysql_free_result(result);
+
+      current_db = my_strdup(PSI_NOT_INSTRUMENTED, chosen_database, MYF(MY_WME)); // 프롬프트에 Database 표시
+
+      glob_buffer.append( STRING_WITH_LEN("  USE ") );
+      glob_buffer.append( chosen_database, strlen(chosen_database) );
+
+  }
+  else if(user_command[0]=='p' && user_command[1]=='s'){
+      glob_buffer.append( STRING_WITH_LEN("  SHOW PROCESSLIST;"));
+  }
+  else if(user_command[0]=='u' && user_command[1]=='u'){
+      glob_buffer.append( STRING_WITH_LEN("  SELECT user,host FROM mysql.user;"));
+  }
+  else if(user_command[0]=='v' && user_command[1]=='v'){
+      glob_buffer.append( STRING_WITH_LEN("  SHOW GLOBAL VARIABLES LIKE '%") );
+      glob_buffer.append( object_name, strlen(object_name) );
+      glob_buffer.append( STRING_WITH_LEN("%';") );
+  }
+  else if(user_command[0]=='s' && user_command[1]=='s'){
+      glob_buffer.append( STRING_WITH_LEN("  SHOW SESSION STATUS LIKE '%") );
+      glob_buffer.append( object_name, strlen(object_name) );
+      glob_buffer.append( STRING_WITH_LEN("%';") );
+  }
+  else{
+    return put_info("Unknown command\n\n>> Usage ::\n   =========================================================\n     USER (name)\n     dd             : SHOW DATABASEs\n     dd?            : USE {database}\n     dc             : SHOW CREATE DATABASE (name)\n     tt             : SHOW TABLEs\n     tc             : SHOW CREATE TABLE (name)\n     ps             : SHOW PROCESSLIST\n     uu             : SHOW USER & HOST\n     \n   =========================================================", INFO_ERROR, 0);
+  }
+  int rtn=0;
+
+  if(glob_buffer.length()>0){
+    //put_info(glob_buffer.ptr(), INFO_INFO); //수행된 명령을 출력할지 여부
+    rtn = com_go(&glob_buffer, nullptr);
+  }
+
+  vertical = oldvertical;
+
+  return rtn;
 }
