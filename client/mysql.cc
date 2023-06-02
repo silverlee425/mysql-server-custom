@@ -2391,6 +2391,7 @@ static COMMANDS *find_command(char cmd_char) {
      the command's pointer or NULL.
 */
 static COMMANDS *find_command(char *name) {
+    printf("\033[0m"); //Release Color by silver
     uint len;
     char *end;
     DBUG_TRACE;
@@ -5235,14 +5236,22 @@ static const char *construct_prompt() {
                     processed_prompt.append(current_db ? current_db : "(none)");
                     break;
                 case 'h': {
-                    const char *prompt;
+		    const char *prompt;
                     prompt = connected ? mysql_get_host_info(&mysql) : "not_connected";
-                    if (strstr(prompt, "Localhost"))
+                    if (strstr(prompt, "Localhost")) {
+                        printf("\033[0;32m"); //Green by silver
                         processed_prompt.append("localhost");
+                    }
                     else {
+                        if (strstr(prompt, "prod"))
+                            printf("\033[0;31m"); //Red by silver
+                        else if (strstr(prompt, "dev"))
+                            printf("\033[0;33m"); //Yellow by silver
+                        else
+                            printf("\033[0;32m"); //Green by silver
                         const char *end = strcend(prompt, ' ');
                         processed_prompt.append(prompt, (uint)(end - prompt));
-                    }
+                    }			                  
                     break;
                 }
                 case 'p': {
@@ -5495,7 +5504,8 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
         my_free(current_db);
         current_db = nullptr;
 
-        mysql_query(&mysql, "SELECT DATABASE()");
+	mysql_query(&mysql, "SELECT IFNULL(DATABASE(), 'none')");
+	    
         result = mysql_use_result(&mysql);
         MYSQL_ROW row = mysql_fetch_row(result);
         strcat(chosen_database, row[0]); //현재 데이터베이스 받아오기
@@ -5516,19 +5526,25 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
         mysql_query(&mysql, cmd1);
         result = mysql_use_result(&mysql);
         row = mysql_fetch_row(result);
+	    
+	if (row == NULL) {
+	    puts("Table not exist\n");
+	    vertical = oldvertical;
+	    return 0;
+	}
 
         strcat(chosen_table, row[0]); //선택한 테이블명 받아오기
 
-        glob_buffer.append( STRING_WITH_LEN(" SHOW CREATE TABLE ") );
+        glob_buffer.append( STRING_WITH_LEN(" SHOW CREATE TABLE `") );
         glob_buffer.append( chosen_table, strlen(chosen_table) );
-        glob_buffer.append( STRING_WITH_LEN(";") );
+        glob_buffer.append( STRING_WITH_LEN("`;") );
         mysql_free_result(result);
     }
         //mysql> \\tc{table}
     else if(user_command[0]=='t' && user_command[1]=='c' && isdigit(user_command[2])==false){
-        glob_buffer.append( STRING_WITH_LEN(" SHOW CREATE TABLE ") );
+        glob_buffer.append( STRING_WITH_LEN(" SHOW CREATE TABLE `") );
         glob_buffer.append( object_name, strlen(object_name) );
-        glob_buffer.append( STRING_WITH_LEN(";") );
+        glob_buffer.append( STRING_WITH_LEN("`;") );
     }
         //mysql> \\ts{table}
     else if(user_command[0]=='t' && user_command[1]=='s' && isdigit(user_command[2])==false){
@@ -5570,6 +5586,12 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
         mysql_query(&mysql, cmd1);
         result = mysql_use_result(&mysql);
         row = mysql_fetch_row(result);
+	    
+	if (row == NULL) {
+	    puts("Table not exist\n");
+	    vertical = oldvertical;
+	    return 0;
+	}
 
         strcat(chosen_table, row[0]); //선택한 테이블명 받아오기
 
@@ -5607,7 +5629,7 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
     }
         //mysql> \\dd
     else if(user_command[0]=='d' && user_command[1]=='d' && user_command[2]==0){
-	glob_buffer.append( STRING_WITH_LEN("  SELECT row_number()over(order by schema_name) AS number, schema_name FROM INFORMATION_SCHEMA.SCHEMATA WHERE schema_name NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys');") );
+	glob_buffer.append( STRING_WITH_LEN("  SELECT row_number()over(order by schema_name) AS number, schema_name FROM INFORMATION_SCHEMA.SCHEMATA WHERE schema_name NOT IN ('mysql', 'sys');") );
     }
         //mysql> \\dds
     else if(user_command[0]=='d' && user_command[1]=='d' && user_command[2]=='s'){
@@ -5629,6 +5651,11 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
             result = mysql_use_result(&mysql);
             MYSQL_ROW row = mysql_fetch_row(result);
 
+	    if (row == NULL) {
+	        puts("Database not exist\n");
+	        return 0;
+	    }
+		
             strcat(chosen_database, row[0]); //선택한 데이터베이스 받아오기
 
             glob_buffer.append( STRING_WITH_LEN("  SELECT table_name, table_schema, SUM(index_length + data_length) AS index_data_size FROM information_schema.tables WHERE table_schema = '") );
@@ -5643,11 +5670,10 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
     }
         //mysql> \\dd{number}
     else if(user_command[0]=='d' && user_command[1]=='d' && isdigit(user_command[2])==true){
-        int num_fields;
+        //int num_fields;
         MYSQL_RES *result=nullptr;
         //MYSQL_FIELD *field;
-        MYSQL_ROW row;
-        char cmd1[]="SELECT A.schema_name FROM (SELECT row_number()over(order by schema_name) AS number, schema_name FROM INFORMATION_SCHEMA.SCHEMATA WHERE schema_name NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')) AS A WHERE A.number = ";
+        char cmd1[]="SELECT A.schema_name FROM (SELECT row_number()over(order by schema_name) AS number, schema_name FROM INFORMATION_SCHEMA.SCHEMATA WHERE schema_name NOT IN ('mysql', 'sys')) AS A WHERE A.number = ";
         char cmd2[3]={user_command[2], user_command[3], ';'}; //{데이터베이스, 세미콜론}
         char chosen_database[100]="";
 
@@ -5655,8 +5681,16 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
 
         mysql_query(&mysql, cmd1);
         result = mysql_use_result(&mysql);
-        num_fields = mysql_field_count(&mysql);
+        MYSQL_ROW row = mysql_fetch_row(result);
+	
+	if (row == NULL) {
+	    puts("Database not exist\n");
+	    return 0;
+	}
+	    
+        strcat(chosen_database, row[0]); //선택한 데이터베이스 받아오기
 
+        /*
         while((row = mysql_fetch_row(result)) != NULL)
         {
             for(int i = 0; i < num_fields; i++)
@@ -5670,6 +5704,7 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
             }
             printf("\n");
         }
+        */
         mysql_free_result(result);
 
         current_db = my_strdup(PSI_NOT_INSTRUMENTED, chosen_database, MYF(MY_WME)); // 프롬프트에 Database 표시
@@ -5686,9 +5721,94 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
             glob_buffer.append( STRING_WITH_LEN("  SHOW PROCESSLIST;"));
         }
     }
+        //mysql> \\uuc
+    else if(user_command[0]=='u' && user_command[1]=='u' && user_command[2]=='c'){
+        // uuc {user_number}
+        if (user_command[2]=='c' && isdigit(user_command[3])==true){
+            if (user_command[3] == '0'){
+                return 0;
+            }
+            MYSQL_RES *result=nullptr;
+            char chosen_user[100]="";
+            char chosen_host[100]="";
+
+            char cmd1[1000]="SELECT A.number, A.user, A.host FROM (SELECT row_number()over(order by host) AS number, user, host FROM mysql.user WHERE user NOT IN ('mysql.infoschema', 'mysql.session', 'mysql.sys')) AS A WHERE A.number = ";
+            char cmd2[4]={user_command[3], user_command[4]}; //{유저 1의 자, 유저 10의 자리}
+
+            strcat(cmd1, cmd2);
+            strcat(cmd1, ";");
+
+            mysql_query(&mysql, cmd1);
+            result = mysql_use_result(&mysql);
+            MYSQL_ROW row = mysql_fetch_row(result);
+		
+	    if (row == NULL) {
+	        puts("User not exist\n");
+	        return 0;
+	    }
+
+            strcat(chosen_user, row[1]); // 선택한 유저 받아오기
+            strcat(chosen_host, row[2]); // 선택한 유저 받아오기
+            
+            glob_buffer.append( STRING_WITH_LEN("  SHOW CREATE USER '"));
+            glob_buffer.append( chosen_user, strlen(chosen_user) );
+            glob_buffer.append( STRING_WITH_LEN("'@'"));
+            glob_buffer.append( chosen_host, strlen(chosen_host) );
+            glob_buffer.append( STRING_WITH_LEN("';"));
+            mysql_free_result(result);
+
+        }
+        // uus
+        else if (user_command[2]=='c' && isdigit(user_command[3])==false){
+            glob_buffer.append( STRING_WITH_LEN("  SELECT A.number, A.user, A.host FROM (SELECT row_number()over(order by host) AS number, user, host FROM mysql.user WHERE user NOT IN ('mysql.infoschema', 'mysql.session', 'mysql.sys')) AS A;"));
+        }
+        
+    }
+        //mysql> \\uug
+    else if(user_command[0]=='u' && user_command[1]=='u' && user_command[2]=='g'){
+        // uug {user_number}
+        if (user_command[2]=='g' && isdigit(user_command[3])==true){
+            if (user_command[3] == '0'){
+                return 0;
+            }
+            MYSQL_RES *result=nullptr;
+            char chosen_user[100]="";
+            char chosen_host[100]="";
+
+            char cmd1[1000]="SELECT A.number, A.user, A.host FROM (SELECT row_number()over(order by host) AS number, user, host FROM mysql.user WHERE user NOT IN ('mysql.infoschema', 'mysql.session', 'mysql.sys')) AS A WHERE A.number = ";
+            char cmd2[4]={user_command[3], user_command[4]}; //{유저 1의 자, 유저 10의 자리}
+
+            strcat(cmd1, cmd2);
+            strcat(cmd1, ";");
+
+            mysql_query(&mysql, cmd1);
+            result = mysql_use_result(&mysql);
+            MYSQL_ROW row = mysql_fetch_row(result);
+
+	    if (row == NULL) {
+	        puts("User not exist\n");
+	        return 0;
+	    }
+		
+            strcat(chosen_user, row[1]); // 선택한 유저 받아오기
+            strcat(chosen_host, row[2]); // 선택한 유저 받아오기
+            
+            glob_buffer.append( STRING_WITH_LEN("  SHOW GRANTS FOR '"));
+            glob_buffer.append( chosen_user, strlen(chosen_user) );
+            glob_buffer.append( STRING_WITH_LEN("'@'"));
+            glob_buffer.append( chosen_host, strlen(chosen_host) );
+            glob_buffer.append( STRING_WITH_LEN("';"));
+            mysql_free_result(result);
+
+        }
+        // uug
+        else if (user_command[2]=='s' && isdigit(user_command[3])==false){
+            glob_buffer.append( STRING_WITH_LEN("  SELECT A.number, A.user, A.host FROM (SELECT row_number()over(order by host) AS number, user, host FROM mysql.user WHERE user NOT IN ('mysql.infoschema', 'mysql.session', 'mysql.sys')) AS A;"));
+        }
+    }
         //mysql> \\uu
     else if(user_command[0]=='u' && user_command[1]=='u'){
-        glob_buffer.append( STRING_WITH_LEN("  SELECT user,host FROM mysql.user;"));
+        glob_buffer.append( STRING_WITH_LEN("  SELECT A.number, A.user, A.host FROM (SELECT row_number()over(order by host) AS number, user, host FROM mysql.user WHERE user NOT IN ('mysql.infoschema', 'mysql.session', 'mysql.sys')) AS A;"));
     }
         //mysql> \\vv
     else if(user_command[0]=='v' && user_command[1]=='v'){
