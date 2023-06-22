@@ -5602,7 +5602,6 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
     }
         //mysql> \\tt
     else if(user_command[0]=='t' && user_command[1]=='t'){
-        else if(user_command[0]=='t' && user_command[1]=='t'){
         if (strlen(object_name) == 0){
             MYSQL_RES *res;
             char chosen_database[100]="";
@@ -5628,7 +5627,6 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
             glob_buffer.append( object_name, strlen(object_name) );
             glob_buffer.append( STRING_WITH_LEN("%';") );
         }
-    }
     }
         //mysql> \\dc
     else if(user_command[0]=='d' && user_command[1]=='c'){
