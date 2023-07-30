@@ -5852,15 +5852,19 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
     }
 	//mysql> \\aurorakill
     else if(STRCMP(full_user_command, ==, "\\\\aurorakill")){
-    	puts("===================================================================================================================================");
-    	puts("pager sed 's/|//g'; select concat('CALL mysql.rds_kill(',id,');') from information_schema.processlist where user='{user}'; nopager;");
-    	puts("===================================================================================================================================");
+    	puts("┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐");
+    	puts("│ Kill connection query for Aurora MySQL                                                                                              │");
+    	puts("├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤");
+    	puts("│ pager sed 's/|//g'; select concat('CALL mysql.rds_kill(',id,');') from information_schema.processlist where user='{user}'; nopager; │");
+    	puts("└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘");
     }
         //mysql> \\kill
     else if(STRCMP(full_user_command, ==, "\\\\kill")){
-    	puts("===================================================================================================================");
-    	puts("pager sed 's/|//g'; select concat('kill ',id,';') from information_schema.processlist where user='{user}'; nopager;");
-    	puts("===================================================================================================================");
+    	puts("┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐");
+    	puts("│ Kill connection query for MySQL                                                                                     │");
+    	puts("├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤");
+    	puts("│ pager sed 's/|//g'; select concat('kill ',id,';') from information_schema.processlist where user='{user}'; nopager; │");
+    	puts("└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘");
     }
     else{
         return put_info("Unknown command\n\n>> Usage ::\n   =========================================================\n     USER (name)\n     dd             : SHOW DATABASEs\n     dd?            : USE {database}\n     dc             : SHOW CREATE DATABASE (name)\n     tt             : SHOW TABLEs\n     tc             : SHOW CREATE TABLE (name)\n     ps             : SHOW PROCESSLIST\n     uu             : SHOW USER & HOST\n     \n   =========================================================", INFO_ERROR, 0);
