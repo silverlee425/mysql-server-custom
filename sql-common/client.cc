@@ -64,6 +64,7 @@
 #include <ios>
 #include <iostream>
 #include <string>
+#include <thread> // by silver
 
 #include "base64.h"
 #include "client_async_authentication.h"
@@ -141,6 +142,17 @@
 
 using std::string;
 using std::swap;
+
+//by silver
+struct ConnInfoSub {
+    const char* host;
+    const char* user;
+    const char* passwd;
+    const char* db;
+    unsigned int port;
+    const char* unix_socket;
+    unsigned long client_flag;
+  };
 
 #define STATE_DATA(M) \
   (NULL != (M) ? &(MYSQL_EXTENSION_PTR(M)->state_change) : NULL)
@@ -7919,6 +7931,61 @@ net_async_status STDCALL mysql_send_query_nonblocking(MYSQL *mysql,
   return ret;
 }
 
+//by silver
+void monitorDDLProgress(const ConnInfoSub& connInfoSub) {
+    MYSQL *mysql = mysql_init(NULL);   
+    char ddl_percentage[10] = "";
+    char old_ddl_percentage[10] = "";
+
+    //시작 시간
+    std::chrono::steady_clock::time_point start_time = std::chrono::steady_clock::now();
+
+    mysql_real_connect(mysql, 
+                       connInfoSub.host, 
+                       connInfoSub.user, 
+                       connInfoSub.passwd,
+                       connInfoSub.db, 
+                       connInfoSub.port, 
+                       connInfoSub.unix_socket,
+                       connInfoSub.client_flag);
+
+    while (true) {
+        sleep(5); //DDL 수행을 보장하기 위해서 최소 5초간 대기한다.
+
+        MYSQL_RES *result = nullptr;
+        char cmd1[] = "SELECT ROUND(WORK_COMPLETED/WORK_ESTIMATED*100, 2) AS percentage FROM performance_schema.events_stages_current ORDER BY WORK_COMPLETED DESC LIMIT 1;";
+        mysql_query(mysql, cmd1);
+        result = mysql_use_result(mysql);
+        MYSQL_ROW row = mysql_fetch_row(result);
+
+        if (row == NULL) {
+          puts("DDL is done...\n");
+          mysql_free_result(result);
+          mysql_thread_end(); //스레드 종료
+          break;
+        }
+
+        strcpy(ddl_percentage, row[0]);
+
+        std::chrono::duration<double> elapsed_time = std::chrono::steady_clock::now() - start_time;
+        int total_seconds = static_cast<int>(elapsed_time.count());
+        int milliseconds = static_cast<int>((elapsed_time.count() - total_seconds) * 1000);
+
+        int minutes = total_seconds / 60;
+        int seconds = total_seconds % 60;
+
+        if (strcmp(ddl_percentage, old_ddl_percentage) != 0) {
+          printf("Online DDL Progress: %s(%%) (%dmin %dsec %dms)\n", ddl_percentage, minutes, seconds, milliseconds);
+        } else {
+          printf("Online DDL Progress: 99.99(%%)..almost done (%dmin %dsec %dms)\n", minutes, seconds, milliseconds);
+        }
+
+        strcpy(old_ddl_percentage, ddl_percentage);
+        mysql_free_result(result);
+    }
+    mysql_close(mysql);
+}
+
 int STDCALL mysql_real_query(MYSQL *mysql, const char *query, ulong length) {
   int retval;
   DBUG_TRACE;
@@ -7929,8 +7996,27 @@ int STDCALL mysql_real_query(MYSQL *mysql, const char *query, ulong length) {
     DBUG_SET("-d,inject_ER_NET_READ_INTERRUPTED");
     return 1;
   });
+  
+  //by silver
+  ConnInfoSub connInfoSub = {
+    mysql->host,
+    mysql->user,
+    mysql->passwd,
+    mysql->db,
+    mysql->port,
+    mysql->unix_socket,
+    mysql->client_flag
+  };
 
-  if (mysql_send_query(mysql, query, length)) return 1;
+  //ALTER TABLE문을 수행하는 경우에만 체크
+  if (strcasestr(query, "alter table")) {
+    std::thread queryThread(monitorDDLProgress, connInfoSub);
+    if (mysql_send_query(mysql, query, length)) return 1;
+    queryThread.join();
+  } else {
+    if (mysql_send_query(mysql, query, length)) return 1;
+  }
+  
   retval = (int)(*mysql->methods->read_query_result)(mysql);
   mysql_extension_bind_free(MYSQL_EXTENSION_PTR(mysql));
   return retval;
