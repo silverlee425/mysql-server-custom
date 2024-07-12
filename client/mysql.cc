@@ -5478,33 +5478,30 @@ static int com_resetconnection(String *buffer [[maybe_unused]],
 #define MAX_SUBCOMMAND_LEN 6
 #define STRCMP(a, E, b) (strcmp(a, b) E 0)
 #endif
-static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
 
-    char user_command[MAX_SUBCOMMAND_LEN]="";
+static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
+    char user_command[MAX_SUBCOMMAND_LEN] = "";
     char object_name[FN_REFLEN] = "";
     char *end;
     char *param;
-    char *full_user_command=line;
+    char *full_user_command = line;
 
-    // 명령어 정의
-    user_command[0] = line[2];
-    user_command[1] = line[3];
-    user_command[2] = line[4];
-    user_command[3] = line[5];
-    user_command[4] = line[6];
-    user_command[5] = line[7]; // 예비
+    // Extract user command
+    for (int i = 2; i < 2 + MAX_SUBCOMMAND_LEN - 1; ++i) {
+        user_command[i - 2] = line[i];
+    }
 
     while (my_isspace(charset_info, *line)) line++;
-    if (!(param = strchr(line, ' '))){
-    }else{
+
+    if ((param = strchr(line, ' ')) != NULL) {
         while (my_isspace(charset_info, *param)) param++;
         end = strmake(object_name, param, sizeof(object_name) - 1);
-        if (end > object_name){
+        if (end > object_name) {
+            while (end > object_name && (my_isspace(charset_info, end[-1]) ||
+                                         my_iscntrl(charset_info, end[-1])))
+                end--;
+            end[0] = 0;
         }
-        while (end > object_name && (my_isspace(charset_info, end[-1]) ||
-                                     my_iscntrl(charset_info, end[-1])))
-            end--;
-        end[0] = 0;
     }
 
     // Save old vertical mode(true일 경우 세로 출력 가능)
@@ -5512,61 +5509,116 @@ static int com_extra(String *buffer MY_ATTRIBUTE((unused)), char *line) {
 
     // Run command
     //mysql> \\tc{number}
-    if(user_command[0]=='t' && user_command[1]=='c' && isdigit(user_command[2])==true){
-        if (user_command[4] != '\0') {
+    if (user_command[0] == 't' && user_command[1] == 'c' && isdigit(user_command[2])) {
+        if (user_command[4] != '\0' || isalpha(user_command[3]) || user_command[2] == '0') {
             puts("Not supported..\n");
             return 0;
         }
 
-        if (isdigit(user_command[2]) && isalpha(user_command[3])) {
-            puts("Not supported..\n");
+        MYSQL_RES *result = NULL;
+
+        // Initial allocation for chosen_database
+        char *chosen_database = (char *)calloc(strlen("none") + 1, sizeof(char)); // allocate enough memory for initial query result
+        if (!chosen_database) {
+            perror("calloc failed");
             return 0;
         }
         
-        if (user_command[2] == '0') {
+        my_free(current_db);
+        current_db = NULL;
+
+        if (mysql_query(&mysql, "SELECT IFNULL(DATABASE(), 'none')") != 0) {
+            perror("mysql_query failed");
+            free(chosen_database);
             return 0;
         }
-        MYSQL_RES *result=nullptr;
-        char chosen_database[100]="";
-        char chosen_table[100]="";
-        my_free(current_db);
-        current_db = nullptr;
 
-	    mysql_query(&mysql, "SELECT IFNULL(DATABASE(), 'none')");
-	    
         result = mysql_use_result(&mysql);
+        if (result == NULL) {
+            perror("mysql_use_result failed");
+            free(chosen_database);
+            return 0;
+        }
+
         MYSQL_ROW row = mysql_fetch_row(result);
-        strcat(chosen_database, row[0]); //현재 데이터베이스 받아오기
+        if (row == NULL) {
+            perror("mysql_fetch_row failed");
+            mysql_free_result(result);
+            free(chosen_database);
+            return 0;
+        }
+
+        // Reallocation based on actual result
+        chosen_database = (char *)realloc(chosen_database, (strlen(row[0]) + 1) * sizeof(char));
+        if (!chosen_database) {
+            perror("realloc failed");
+            mysql_free_result(result);
+            return 0;
+        }
+
+        strcpy(chosen_database, row[0]); // 현재 데이터베이스 받아오기
 
         current_db = my_strdup(PSI_NOT_INSTRUMENTED, chosen_database, MYF(MY_WME)); // 프롬프트에 Database 표시
         mysql_free_result(result);
 
-        char cmd1[500]="SELECT A.table_name FROM (SELECT row_number()over(order by table_name) AS number, table_name FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = '";
-        char cmd2[30]="') AS A WHERE A.number = ";
-        char cmd3[4]={user_command[2], user_command[3]}; //{테이블 1의 자리, 테이블 10의 자리}
+        // Length calculation for dynamic allocation
+        size_t cmd1_len = strlen("SELECT A.table_name FROM (SELECT row_number() over(order by table_name) AS number, table_name FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = '") + strlen(chosen_database) + strlen("') AS A WHERE A.number = ") + 2 + 1;
+        char *cmd1 = (char *)malloc(cmd1_len * sizeof(char));
+        if (!cmd1) {
+            perror("malloc failed");
+            free(chosen_database);
+            return 0;
+        }
 
-        vertical =true;
-        strcat(cmd1, chosen_database);
-        strcat(cmd1, cmd2);
-        strcat(cmd1, cmd3);
-        strcat(cmd1, ";");
+        const char *cmd2 = "SELECT A.table_name FROM (SELECT row_number() over(order by table_name) AS number, table_name FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = '";
+        const char *cmd3 = "') AS A WHERE A.number = ";
+        snprintf(cmd1, cmd1_len, "%s%s%s%c;", cmd2, chosen_database, cmd3, user_command[2]);
 
-        mysql_query(&mysql, cmd1);
+        if (mysql_query(&mysql, cmd1) != 0) {
+            perror("mysql_query failed");
+            free(chosen_database);
+            free(cmd1);
+            return 0;
+        }
+
         result = mysql_use_result(&mysql);
+        if (result == NULL) {
+            perror("mysql_use_result failed");
+            free(chosen_database);
+            free(cmd1);
+            return 0;
+        }
+
         row = mysql_fetch_row(result);
-	    
-	if (row == NULL) {
-	    puts("Table not exist\n");
-	    vertical = oldvertical;
-	    return 0;
-	}
+        if (row == NULL) {
+            puts("Table not exist\n");
+            vertical = oldvertical;
+            mysql_free_result(result);
+            free(chosen_database);
+            free(cmd1);
+            return 0;
+        }
 
-        strcat(chosen_table, row[0]); //선택한 테이블명 받아오기
+        size_t table_name_len = strlen(row[0]) + 1;
+        char *chosen_table = (char *)malloc(table_name_len * sizeof(char));
+        if (!chosen_table) {
+            perror("malloc failed");
+            mysql_free_result(result);
+            free(chosen_database);
+            free(cmd1);
+            return 0;
+        }
+        strcpy(chosen_table, row[0]); // 선택한 테이블명 받아오기
 
-        glob_buffer.append( STRING_WITH_LEN(" SHOW CREATE TABLE `") );
-        glob_buffer.append( chosen_table, strlen(chosen_table) );
-        glob_buffer.append( STRING_WITH_LEN("`;") );
+        glob_buffer.append(STRING_WITH_LEN(" SHOW CREATE TABLE `"));
+        glob_buffer.append(chosen_table, strlen(chosen_table));
+        glob_buffer.append(STRING_WITH_LEN("`;"));
         mysql_free_result(result);
+
+        // 할당한 메모리 해제
+        free(chosen_database);
+        free(chosen_table);
+        free(cmd1);
     }
     //mysql> \\tc{table}
     else if(user_command[0]=='t' && user_command[1]=='c' && isdigit(user_command[2])==false){
